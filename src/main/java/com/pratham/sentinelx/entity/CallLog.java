@@ -24,6 +24,9 @@ public class CallLog {
     @Column(name = "receiver_circle")
     private String receiverCircle;
 
+    @Column(name = "receiver_number")
+    private String receiverNumber;
+
     @Column(name = "distance_km")
     private Integer distanceKm;
 
