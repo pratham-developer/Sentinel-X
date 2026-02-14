@@ -31,7 +31,7 @@ public class RestClientConfig {
 
         // timeouts (dont let the ai hang the user)
         RequestConfig requestConfig = RequestConfig.custom()
-                .setResponseTimeout(Timeout.of(2, TimeUnit.SECONDS)) // hard limit: 2s
+                .setResponseTimeout(Timeout.of(10, TimeUnit.SECONDS)) // hard limit: 2s
                 .build();
 
         HttpClient httpClient = HttpClients.custom()

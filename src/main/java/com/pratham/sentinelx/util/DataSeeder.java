@@ -19,7 +19,6 @@ public class DataSeeder implements CommandLineRunner {
     private final CallLogRepository repository;
     private final Random random = new Random();
 
-    // Actor Phone Numbers
     @Value("${scammer.phone}")
     private String SCAMMER_PHONE;
 
@@ -35,49 +34,68 @@ public class DataSeeder implements CommandLineRunner {
 
         List<CallLog> logs = new ArrayList<>();
 
-        String[] scammerCircles = {"DELHI", "MUMBAI", "CHENNAI", "KOLKATA"};
-        for (int i = 0; i < 60; i++) { // Frequency 60
+        // ─────────────────────────────────────────────────────────────
+        // SCAMMER: Digital Arrest Bot
+        // Target: 3/3 primary FRAUD + dist FRAUD + circles FRAUD
+        // → DIGITAL_ARREST_BOT (confidence 0.97)
+        // ─────────────────────────────────────────────────────────────
+        String[] scammerCircles = {"DELHI", "MUMBAI", "CHENNAI", "KOLKATA", "HYDERABAD", "PUNE", "LUCKNOW"};
+        for (int i = 0; i < 150; i++) {
             logs.add(createLog(
                     SCAMMER_PHONE,
-                    scammerCircles[random.nextInt(scammerCircles.length)],
-                    1900 + random.nextInt(120),
-                    60 + random.nextInt(40)
+                    scammerCircles[i % scammerCircles.length],  // Rotate through all 7 circles
+                    1500 + random.nextInt(1001),                // 1500-2500 km (avg ~2000, FRAUD >1000)
+                    5 + random.nextInt(8)                       // 5-12 seconds (avg ~8.5s, FRAUD <15)
             ));
         }
 
-
-        String deliveryCircle = "BANGALORE";
-        for (int i = 0; i < 24; i++) {
+        // ─────────────────────────────────────────────────────────────
+        // DELIVERY BOY: Safe user (Swiggy/Zomato driver)
+        // Target: 3/3 primary SAFE + all secondary SAFE
+        // → SAFE (confidence 0.92)
+        // ─────────────────────────────────────────────────────────────
+        for (int i = 0; i < 25; i++) {
             logs.add(createLog(
                     DELIVERY_PHONE,
-                    deliveryCircle,
-                    150 + random.nextInt(36),
-                    80 + random.nextInt(20)
+                    "BANGALORE",                                // 1 circle (SAFE ≤3)
+                    3 + random.nextInt(13),                     // 3-15 km (avg ~9km, SAFE <200)
+                    40 + random.nextInt(41)                     // 40-80 seconds (avg ~60s, SAFE ≥30)
             ));
         }
 
-        String[] teleCircles = {"PUNE", "MUMBAI"};
-        for (int i = 0; i < 8; i++) {
+        // ─────────────────────────────────────────────────────────────
+        // TELEMARKETER: Suspicious pattern (Bajaj Finance / Loan calls)
+        // Target: 0 FRAUD primary, 2 UNCERTAIN (dur+freq), 1 SAFE (contacts)
+        //         + secondary bad (dist UNCERTAIN, circles UNCERTAIN)
+        // → SUSPICIOUS_PATTERN (confidence 0.65)
+        // ─────────────────────────────────────────────────────────────
+        String[] teleCircles = {"PUNE", "MUMBAI", "DELHI", "CHENNAI"};
+        for (int i = 0; i < 45; i++) {
             logs.add(createLog(
                     TELEMARKETER_PHONE,
-                    teleCircles[random.nextInt(teleCircles.length)],
-                    230 + random.nextInt(40),
-                    160 + random.nextInt(40)
+                    teleCircles[i % teleCircles.length],        // 4 circles (UNCERTAIN >3 and <6)
+                    300 + random.nextInt(301),                   // 300-600 km (avg ~450km, UNCERTAIN 200-1000)
+                    18 + random.nextInt(8)                       // 18-25 seconds (avg ~21.5s, UNCERTAIN 15-30)
             ));
         }
 
         repository.saveAll(logs);
-        System.out.println("DATABASE SEEDED: Scammer, Delivery, and Telemarketer profiles loaded.");
+        System.out.println("═══════════════════════════════════════════════════════════════");
+        System.out.println("  DATABASE SEEDED — AI Model Expected Classifications:");
+        System.out.println("  SCAMMER      → DIGITAL_ARREST_BOT  (isAnomaly=true)");
+        System.out.println("  DELIVERY     → SAFE                (isAnomaly=false)");
+        System.out.println("  TELEMARKETER → SUSPICIOUS_PATTERN  (isAnomaly=true)");
+        System.out.println("═══════════════════════════════════════════════════════════════");
     }
 
     private CallLog createLog(String caller, String circle, int dist, int dur) {
         CallLog log = new CallLog();
         log.setCallerNumber(caller);
         log.setReceiverCircle(circle);
-        log.setReceiverNumber("+91" + (6000000000L + random.nextInt(900000000))); // Random receiver
+        log.setReceiverNumber("+91" + (6000000000L + random.nextInt(900000000)));
         log.setDistanceKm(dist);
         log.setDuration(dur);
-        log.setTimestamp(LocalDateTime.now().minusHours(random.nextInt(24)));
+        log.setTimestamp(LocalDateTime.now().minusMinutes(random.nextInt(1440))); // Spread across last 24h
         return log;
     }
 }

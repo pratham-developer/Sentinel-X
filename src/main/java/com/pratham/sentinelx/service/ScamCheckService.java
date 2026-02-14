@@ -6,7 +6,7 @@ import com.pratham.sentinelx.dto.PythonRequest;
 import com.pratham.sentinelx.dto.PythonResponse;
 import com.pratham.sentinelx.projection.StatsProjection;
 import com.pratham.sentinelx.repository.CallLogRepository;
-import com.pratham.sentinelx.util.RedisUtil;
+import com.pratham.sentinelx.util.PhoneCheckUtil;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +22,7 @@ import java.time.LocalDateTime;
 public class ScamCheckService {
     private final CallLogRepository callLogRepository;
     private final RestClient pythonClient;
-    private final RedisUtil redisUtil;
+    private final PhoneCheckUtil redisUtil;
 
     //check method
     @CircuitBreaker(name = "aiService", fallbackMethod = "fallbackCheck")
@@ -65,14 +65,26 @@ public class ScamCheckService {
 
         log.info("{}",aiResponse);
 
-        //final verdict logic
+        // Final Verdict Logic
         if (aiResponse != null && aiResponse.isAnomaly()) {
-            //cache this scammer for 1 hour to save ai costs next time
-            redisUtil.blacklist(phone);
-            return buildResponse("BLOCK", (int)(aiResponse.getConfidence() * 100),
-                    aiResponse.getRiskType(), traceId);
+
+            // FIX: Compare against 0.75 (75%), not 75
+            if (aiResponse.getConfidence() >= 0.75) {
+
+                // High Confidence (e.g., 0.99) -> BLOCK & Blacklist
+                // Cache this scammer for 1 hour to save AI costs next time
+                redisUtil.blacklist(phone);
+
+                return buildResponse("BLOCK", (int)(aiResponse.getConfidence() * 100),
+                        "High Risk: " + aiResponse.getRiskType(), traceId);
+            }
+
+            // Medium Confidence (e.g., 0.60) -> WARN (Don't auto-block)
+            return buildResponse("WARN", (int)(aiResponse.getConfidence() * 100),
+                    "Suspicious: " + aiResponse.getRiskType(), traceId);
         }
 
+        // Low Confidence / Not Anomaly -> ALLOW
         return buildResponse("ALLOW", 10, "Safe Caller", traceId);
     }
 

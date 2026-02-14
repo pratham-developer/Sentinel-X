@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 @RequiredArgsConstructor
-public class RedisUtil {
+public class PhoneCheckUtil {
 
     private final String keyPrefix = "blacklist:";
     private final RedisTemplate<String, Object> redisTemplate;
@@ -20,7 +20,7 @@ public class RedisUtil {
 
     public void blacklist(String phone) {
         try {
-            String key = keyPrefix + phone;
+            String key = getKey(phone);
             redisTemplate.opsForValue()
                     .set(key, "1", 1, TimeUnit.HOURS);
         } catch (Exception e) {
@@ -31,7 +31,7 @@ public class RedisUtil {
 
     public boolean isBlacklisted(String phone) {
         try {
-            Boolean hasKey = redisTemplate.hasKey(keyPrefix + phone);
+            Boolean hasKey = redisTemplate.hasKey(getKey(phone));
             return Boolean.TRUE.equals(hasKey); // Avoid NPE
         } catch (Exception e) {
             // Log error but return false to fail-open (allow call) if Redis dies
