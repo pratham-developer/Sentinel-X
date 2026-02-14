@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 @Slf4j
 public class ScamCheckService {
     private final CallLogRepository callLogRepository;
+    private final CrowdReportService crowdReportService;
     private final RestClient pythonClient;
     private final PhoneCheckUtil redisUtil;
 
@@ -30,22 +31,42 @@ public class ScamCheckService {
         String phone = request.getPhoneNumber();
         log.info("[{}] Checking call from: {}", traceId, phone);
 
-        //redis cache Check (Speed: <5ms)
+        // 1. Redis Cache Check (Fastest)
         if (redisUtil.isBlacklisted(phone)) {
             log.info("[{}] Cache HIT. Phone Detected: {}", traceId, phone);
-            return buildResponse("BLOCK", 99, "Previously Confirmed Fraud", traceId);
+            return buildResponse("BLOCK", 99, "Confirmed Fraud (Blacklisted)", traceId);
         }
 
-        //postgres aggregation
-        StatsProjection stats = callLogRepository.getCallerStats(phone, LocalDateTime.now().minusHours(1));
-        log.info("{}",stats.getFreq());
+        // 2. CROWD REPORT CHECK (The "Truecaller" Layer)
+        // We check this BEFORE Postgres stats because reports are definitive.
+        long reportCount = crowdReportService.getReportCount(phone);
 
-        //handle new numbers
+        if (reportCount >= 10) {
+            // If 10 people reported it, BLOCK IT immediately. Don't waste AI resources.
+            log.warn("🚫 CROWD STRIKE: {} has {} reports. Blocking.", phone, reportCount);
+            redisUtil.blacklist(phone); // Add to Redis for next time
+            return buildResponse("BLOCK", 95, "Reported by " + reportCount + " Users", traceId);
+        }
+
+        if (reportCount >= 3) {
+            // 3-9 reports -> We are suspicious. We will continue to AI to see if stats match.
+            log.info("⚠️ Suspicious: {} has {} reports.", phone, reportCount);
+            // We don't return WARN yet, we let AI decide if it confirms the suspicion.
+        }
+
+        // 3. Postgres Aggregation (Network AI)
+        StatsProjection stats = callLogRepository.getCallerStats(phone, LocalDateTime.now().minusHours(1));
+
+        // 4. Handle New Numbers
         if (stats.getFreq() == 0) {
+            // New number, but has 5 reports? WARN.
+            if (reportCount >= 3) {
+                return buildResponse("WARN", 60, "New Number (Reported by " + reportCount + ")", traceId);
+            }
             return buildResponse("ALLOW", 0, "New Number", traceId);
         }
 
-        //ai inference
+        // 5. AI Inference
         PythonRequest pyReq = PythonRequest.builder()
                 .phoneNumber(phone)
                 .avgDuration(stats.getAvgDur() != null ? stats.getAvgDur() : 0.0)
@@ -55,36 +76,37 @@ public class ScamCheckService {
                 .circleDiversity(stats.getCircleDiv())
                 .build();
 
-        log.info("{}",pyReq);
-
         PythonResponse aiResponse = pythonClient.post()
                 .uri("/internal/predict")
                 .body(pyReq)
                 .retrieve()
                 .body(PythonResponse.class);
 
-        log.info("{}",aiResponse);
-
-        // Final Verdict Logic
+        // 6. Final Verdict Logic (Hybrid: AI + Reports)
         if (aiResponse != null && aiResponse.isAnomaly()) {
 
-            // FIX: Compare against 0.75 (75%), not 75
-            if (aiResponse.getConfidence() >= 0.75) {
+            // Adjust confidence based on Crowd Reports
+            // If AI says 60% confidence, but 5 people reported it -> Bump to 90% (BLOCK)
+            double finalConfidence = aiResponse.getConfidence();
+            if (reportCount >= 3) {
+                finalConfidence += 0.3; // Boost confidence by 30% if community hates him
+            }
 
-                // High Confidence (e.g., 0.99) -> BLOCK & Blacklist
-                // Cache this scammer for 1 hour to save AI costs next time
+            if (finalConfidence >= 0.70) {
                 redisUtil.blacklist(phone);
-
-                return buildResponse("BLOCK", (int)(aiResponse.getConfidence() * 100),
+                return buildResponse("BLOCK", (int)(Math.min(finalConfidence, 0.99) * 100),
                         "High Risk: " + aiResponse.getRiskType(), traceId);
             }
 
-            // Medium Confidence (e.g., 0.60) -> WARN (Don't auto-block)
-            return buildResponse("WARN", (int)(aiResponse.getConfidence() * 100),
+            return buildResponse("WARN", (int)(finalConfidence * 100),
                     "Suspicious: " + aiResponse.getRiskType(), traceId);
         }
 
-        // Low Confidence / Not Anomaly -> ALLOW
+        // AI says Safe, but we have 5 reports? Still WARN.
+        if (reportCount >= 3) {
+            return buildResponse("WARN", 60, "Reported by Community", traceId);
+        }
+
         return buildResponse("ALLOW", 10, "Safe Caller", traceId);
     }
 
